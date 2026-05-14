@@ -1,0 +1,9 @@
+ib-insync==0.9.86
+matplotlib==3.10.5
+numpy==2.3.2
+pandas==2.3.2
+python-dotenv==1.1.1
+PyYAML==6.0.2
+requests==2.32.5
+scipy==1.16.1
+yfinance==0.2.65

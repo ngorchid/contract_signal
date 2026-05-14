@@ -1,0 +1,27 @@
+contract_strategy:
+  # Backtest periods
+  start_dev:  2015-01-01
+  end_dev:    2021-12-31
+  start_test: 2022-01-01
+  end_test:   2025-12-31
+
+  # Signal filters
+  min_amount:           50000000      # Minimum contract award ($)
+  hold_days:            60            # Trading days to hold each position
+  top_k:                120           # Max positions per day (rarely binds)
+  min_materiality:      0.25_mean     # 0.25x dev-period mean materiality
+  8k_lookback_days:     28            # 8-K pre-announcement filter window
+  max_market_cap:       100000000000  # $100B cap — focus on mid-cap names
+
+  # Options
+  call_otm_pct:         0.30          # Strike = spot * (1 + call_otm_pct)
+
+  # Live trading
+  min_materiality_live: 0.0008        # Absolute threshold (resolved from backtest)
+  contracts_per_signal: 1             # Option contracts per signal (100 shares each)
+  reporting_lookback_days: 3          # Days back to search USASpending (reporting lag)
+  max_reporting_lag_days:  5          # Discard contracts older than this
+
+# IB Gateway startup scripts — correct one selected automatically based on OS
+ib_gateway_bat_mac: "/path/to/StartGateway.sh"
+ib_gateway_bat_win: "C:/Users/YourName/IBC/IBCWin-x.x.x/StartGateway.bat"

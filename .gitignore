@@ -1,0 +1,27 @@
+# Secrets
+.env
+
+# Runtime data (rebuilt automatically)
+contract_cache/
+edgar_cache/
+contract_positions.json
+contract_trade_log.json
+contract_processed_ids.json
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# MacOS
+.DS_Store
+
+# Models (large binary files)
+models/
