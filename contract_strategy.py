@@ -375,7 +375,8 @@ def historical_vol(prices_series, window=60):
 
 
 def compute_forward_returns(contracts_df, prices, shares_outstanding, hold_days=5,
-                            option_expiry_years=1.0, risk_free_rate=0.05):
+                            option_expiry_years=1.0, risk_free_rate=0.05,
+                            transaction_cost_pct=0.0):
     """
     For each contract award compute:
     - fwd_return: stock return over next hold_days trading days
@@ -422,10 +423,17 @@ def compute_forward_returns(contracts_df, prices, shares_outstanding, hold_days=
         T_entry = option_expiry_years
         T_exit = option_expiry_years - hold_days / 252.0
         K = entry_price  # ATM strike
+        tc = transaction_cost_pct  # shorthand
         if sigma and not np.isnan(sigma):
             c_entry = bs_call_price(entry_price, K, T_entry, risk_free_rate, sigma)
             c_exit  = bs_call_price(exit_price,  K, T_exit,  risk_free_rate, sigma)
-            option_return = (c_exit - c_entry) / c_entry if (c_entry and c_entry > 0) else np.nan
+            # Apply spread cost: pay ask on entry, receive bid on exit
+            if c_entry and c_entry > 0:
+                c_entry_paid    = c_entry * (1 + tc)
+                c_exit_received = c_exit  * (1 - tc)
+                option_return = (c_exit_received - c_entry_paid) / c_entry_paid
+            else:
+                option_return = np.nan
 
             # Single OTM call returns for several strike widths
             otm_call_returns = {}
@@ -433,7 +441,12 @@ def compute_forward_returns(contracts_df, prices, shares_outstanding, hold_days=
                 K_otm = entry_price * (1 + otm_pct)
                 co_entry = bs_call_price(entry_price, K_otm, T_entry, risk_free_rate, sigma)
                 co_exit  = bs_call_price(exit_price,  K_otm, T_exit,  risk_free_rate, sigma)
-                otm_call_returns[otm_pct] = (co_exit - co_entry) / co_entry if (co_entry and co_entry > 0) else np.nan
+                if co_entry and co_entry > 0:
+                    co_entry_paid    = co_entry * (1 + tc)
+                    co_exit_received = co_exit  * (1 - tc)
+                    otm_call_returns[otm_pct] = (co_exit_received - co_entry_paid) / co_entry_paid
+                else:
+                    otm_call_returns[otm_pct] = np.nan
 
             # Bull call spread returns for several OTM widths
             spread_returns = {}
@@ -442,7 +455,12 @@ def compute_forward_returns(contracts_df, prices, shares_outstanding, hold_days=
                 s_entry = c_entry - bs_call_price(entry_price, K2, T_entry, risk_free_rate, sigma)
                 s_exit  = c_exit  - bs_call_price(exit_price,  K2, T_exit,  risk_free_rate, sigma)
                 s_exit = min(s_exit, K2 - K) if s_exit is not None else np.nan
-                spread_returns[otm_pct] = (s_exit - s_entry) / s_entry if (s_entry and s_entry > 0) else np.nan
+                if s_entry and s_entry > 0:
+                    s_entry_paid    = s_entry * (1 + tc)
+                    s_exit_received = s_exit  * (1 - tc)
+                    spread_returns[otm_pct] = (s_exit_received - s_entry_paid) / s_entry_paid
+                else:
+                    spread_returns[otm_pct] = np.nan
         else:
             option_return = np.nan
             otm_call_returns = {0.10: np.nan, 0.20: np.nan, 0.30: np.nan}

@@ -58,10 +58,10 @@ USASpending.gov API
 
 | Period | Ann. Return | Sharpe | Max Drawdown |
 |---|---|---|---|
-| Dev (2015–2021) | 40.8% | 3.10 | -26.2% |
-| Test (2022–2025) | 57.0% | 5.05 | -10.7% |
+| Dev (2015–2021) | 39.4% | 2.39 | -30.9% |
+| Test (2022–2025) | 54.6% | 4.00 | -16.9% |
 
-*Options returns modelled using Black-Scholes with 60-day historical volatility. Time decay is accounted for at exit.*
+*Options returns modelled using Black-Scholes with 60-day historical volatility. Time decay accounted for at exit. Transaction costs of 3% per leg (entry + exit) applied to model bid-ask spread.*
 
 ---
 
