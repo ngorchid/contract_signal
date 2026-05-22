@@ -482,7 +482,7 @@ def run_contract_live(ib, config, dry_run=False):
         unmatched = contracts_df[contracts_df["Recipient Name"].apply(map_to_ticker).isna()]
         if not unmatched.empty:
             unmatched_rows = [
-                {"recipient": r["Recipient Name"], "amount": r["Award Amount"], "date": str(r["Action Date"])[:10]}
+                {"recipient": r["Recipient Name"], "amount": r["Transaction Amount"], "date": str(r["Action Date"])[:10]}
                 for _, r in unmatched.iterrows()
             ]
             new_unknowns = lookup_unknown_recipients(unmatched_rows)
