@@ -34,9 +34,10 @@ from contract_strategy import (
     historical_vol,
 )
 
-POSITIONS_FILE   = Path("contract_positions.json")
-TRADE_LOG_FILE   = Path("contract_trade_log.json")
-PROCESSED_IDS_FILE = Path("contract_processed_ids.json")
+POSITIONS_FILE        = Path("contract_positions.json")
+TRADE_LOG_FILE        = Path("contract_trade_log.json")
+PROCESSED_IDS_FILE    = Path("contract_processed_ids.json")
+UNKNOWN_FILE          = Path("contract_unknown_recipients.json")
 RISK_FREE = 0.05
 OPTION_EXPIRY_YEARS = 1.0
 
@@ -78,6 +79,61 @@ def append_trade_log(sell_record):
 
 def total_pnl_since_inception():
     return sum(t.get("pnl", 0) for t in load_trade_log())
+
+
+def load_unknown_recipients():
+    if UNKNOWN_FILE.exists():
+        with open(UNKNOWN_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_unknown_recipients(data):
+    with open(UNKNOWN_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def lookup_unknown_recipients(unmatched_rows):
+    """
+    For each unmatched recipient, try yfinance search to find a candidate ticker.
+    Merges with any previously seen unknowns and returns only new ones found this run.
+    unmatched_rows: list of dicts with keys 'recipient', 'amount', 'date'
+    """
+    known = load_unknown_recipients()
+    new_candidates = []
+
+    for row in unmatched_rows:
+        name = row["recipient"]
+        if name in known:
+            continue  # already logged previously
+
+        candidate_ticker = None
+        candidate_name = None
+        try:
+            results = yf.Search(name, max_results=1).quotes
+            if results:
+                hit = results[0]
+                candidate_ticker = hit.get("symbol")
+                candidate_name = hit.get("shortname") or hit.get("longname")
+        except Exception:
+            pass
+
+        entry = {
+            "recipient": name,
+            "amount": row["amount"],
+            "first_seen": row["date"],
+            "suggested_ticker": candidate_ticker,
+            "suggested_name": candidate_name,
+            "reviewed": False,
+        }
+        known[name] = entry
+        new_candidates.append(entry)
+        logging.info(
+            f"[UNKNOWN] {name} — suggested ticker: {candidate_ticker} ({candidate_name})"
+        )
+
+    save_unknown_recipients(known)
+    return new_candidates
 
 
 def save_option_positions(positions):
@@ -224,7 +280,7 @@ def _table(headers, rows):
     return f"<table style='border-collapse:collapse;font-family:monospace;font-size:13px'><tr>{th}</tr>{body_html}</table>"
 
 
-def build_email_body(buys, sells, today_str):
+def build_email_body(buys, sells, today_str, new_unknowns=None):
     total_pnl = total_pnl_since_inception()
     color = "green" if total_pnl >= 0 else "red"
     sections = [
@@ -279,10 +335,32 @@ def build_email_body(buys, sells, today_str):
     else:
         sections.append("<p>No positions closed today.</p>")
 
+    if new_unknowns:
+        sections.append(
+            "<h3 style='color:#b8600a'>⚠ New Unmapped Recipients — Review Needed</h3>"
+            "<p>These companies had awards ≥ $50M but no ticker in the map. "
+            "If they are publicly traded, add them to <code>CONTRACTOR_TICKER_MAP</code> in "
+            "<code>contract_strategy.py</code>.</p>"
+        )
+        rows = [
+            (
+                u["recipient"][:50],
+                f"${u['amount']/1e6:.0f}M",
+                u["first_seen"],
+                u.get("suggested_ticker") or "—",
+                (u.get("suggested_name") or "—")[:40],
+            )
+            for u in new_unknowns
+        ]
+        sections.append(_table(
+            ["Recipient", "Award", "Date", "Suggested Ticker", "Suggested Name"],
+            rows,
+        ))
+
     return "\n".join(sections)
 
 
-def send_daily_report(buys, sells, today_str):
+def send_daily_report(buys, sells, today_str, new_unknowns=None):
     email_user = os.getenv("EMAIL_USER")
     email_pass = os.getenv("EMAIL_PASS")
     to_email = os.getenv("TO_EMAIL")
@@ -291,7 +369,7 @@ def send_daily_report(buys, sells, today_str):
         return
 
     subject = f"Contract Signal — {today_str}: {len(buys)} bought, {len(sells)} sold"
-    body = build_email_body(buys, sells, today_str)
+    body = build_email_body(buys, sells, today_str, new_unknowns=new_unknowns)
 
     msg = MIMEMultipart("alternative")
     msg["From"] = email_user
@@ -395,9 +473,20 @@ def run_contract_live(ib, config, dry_run=False):
         ]
         logging.info(f"{len(contracts_df)} contracts within max_reporting_lag={max_reporting_lag}d.")
 
+    new_unknowns = []
     if contracts_df.empty:
         logging.info("No new contracts in lookback window — nothing to buy.")
     else:
+        # Detect unmapped recipients before filtering them out
+        from contract_strategy import map_to_ticker
+        unmatched = contracts_df[contracts_df["Recipient Name"].apply(map_to_ticker).isna()]
+        if not unmatched.empty:
+            unmatched_rows = [
+                {"recipient": r["Recipient Name"], "amount": r["Award Amount"], "date": str(r["Action Date"])[:10]}
+                for _, r in unmatched.iterrows()
+            ]
+            new_unknowns = lookup_unknown_recipients(unmatched_rows)
+
         contracts_df = enrich_with_tickers(contracts_df)
 
         if not contracts_df.empty:
@@ -490,7 +579,7 @@ def run_contract_live(ib, config, dry_run=False):
     if not dry_run:
         save_option_positions(remaining)
         save_processed_ids(processed_ids)
-    send_daily_report(buys, sells, today_str)
+    send_daily_report(buys, sells, today_str, new_unknowns=new_unknowns)
 
     logging.info(f"Contract live run complete: {len(buys)} bought, {len(sells)} sold.")
     return buys, sells
