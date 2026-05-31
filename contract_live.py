@@ -189,14 +189,30 @@ def qualify_option(ib, symbol, strike, expiry_str, currency="USD"):
     return qualified[0] if qualified else None
 
 
-def get_option_mid(ib, opt_contract):
-    ticker = ib.reqMktData(opt_contract, "", True, False)
-    ib.sleep(2)
-    price = ticker.midpoint()
-    if not price or np.isnan(price):
-        price = ticker.last
-    if not price or np.isnan(price):
-        price = ticker.close
+def _valid_price(p):
+    return p is not None and not np.isnan(p) and p > 0
+
+
+def get_option_mid(ib, opt_contract, max_wait=8.0):
+    """
+    Return option mid (or last/close fallback). Polls up to max_wait seconds
+    for a valid price, returns None if none becomes available.
+    """
+    # snapshot=False so the ticker keeps updating during the poll
+    ticker = ib.reqMktData(opt_contract, "", False, False)
+    price = None
+    deadline = max_wait
+    waited = 0.0
+    step = 0.5
+    while waited < deadline:
+        ib.sleep(step)
+        waited += step
+        for candidate in (ticker.midpoint(), ticker.last, ticker.close):
+            if _valid_price(candidate):
+                price = candidate
+                break
+        if price is not None:
+            break
     ib.cancelMktData(opt_contract)
     return price
 
@@ -215,8 +231,9 @@ def snapshot_open_positions(ib, positions):
             opt = qualify_option(ib, ticker, pos["strike"], pos["expiry"])
             if opt is not None:
                 current_price = get_option_mid(ib, opt)
-                if current_price and not np.isnan(current_price):
-                    unrealized_pnl = (current_price - pos["entry_price"]) * pos["quantity"] * 100
+                entry = pos.get("entry_price")
+                if _valid_price(current_price) and _valid_price(entry):
+                    unrealized_pnl = (current_price - entry) * pos["quantity"] * 100
         except Exception as e:
             logging.warning(f"[{ticker}] Snapshot failed: {e}")
         snapshot.append({**pos, "current_price": current_price, "unrealized_pnl": unrealized_pnl})
@@ -332,12 +349,14 @@ def build_email_body(buys, sells, today_str, new_unknowns=None, holdings=None):
                 upnl_str = "—"
             else:
                 upnl_str = f"<span style='color:{'green' if upnl >= 0 else 'red'}'>${upnl:+,.2f}</span>"
+            entry = h.get("entry_price")
+            entry_str = f"${entry:.2f}" if _valid_price(entry) else "—"
             rows.append((
                 h["ticker"],
                 h["recipient"][:40],
                 f"${h['strike']:.2f}",
                 h["expiry"],
-                f"${h['entry_price']:.2f}",
+                entry_str,
                 cur_str,
                 h["quantity"],
                 upnl_str,
@@ -492,8 +511,8 @@ def run_contract_live(ib, config, dry_run=False):
                 continue
 
             exit_price = get_option_mid(ib, opt_contract)
-            if not exit_price:
-                logging.warning(f"[{ticker}] No exit price — keeping position.")
+            if not _valid_price(exit_price):
+                logging.warning(f"[{ticker}] No valid exit price — keeping position.")
                 remaining.append(pos)
                 continue
 
@@ -594,8 +613,8 @@ def run_contract_live(ib, config, dry_run=False):
                             continue
 
                         entry_price = get_option_mid(ib, opt_contract)
-                        if not entry_price:
-                            logging.warning(f"[{ticker}] No option price — skipping.")
+                        if not _valid_price(entry_price):
+                            logging.warning(f"[{ticker}] No valid option price — skipping.")
                             continue
 
                         exit_date = pd.bdate_range(start=today, periods=hold_days + 1)[-1].date()
