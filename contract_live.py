@@ -201,6 +201,28 @@ def get_option_mid(ib, opt_contract):
     return price
 
 
+def snapshot_open_positions(ib, positions):
+    """
+    For each open position, fetch the current option mid and compute
+    unrealized P&L. Returns a list of enriched dicts.
+    """
+    snapshot = []
+    for pos in positions:
+        ticker = pos["ticker"]
+        current_price = None
+        unrealized_pnl = None
+        try:
+            opt = qualify_option(ib, ticker, pos["strike"], pos["expiry"])
+            if opt is not None:
+                current_price = get_option_mid(ib, opt)
+                if current_price and not np.isnan(current_price):
+                    unrealized_pnl = (current_price - pos["entry_price"]) * pos["quantity"] * 100
+        except Exception as e:
+            logging.warning(f"[{ticker}] Snapshot failed: {e}")
+        snapshot.append({**pos, "current_price": current_price, "unrealized_pnl": unrealized_pnl})
+    return snapshot
+
+
 # ── Materiality for today's events ───────────────────────────────────────────
 
 def compute_live_events(contracts_df, min_materiality, max_market_cap):
@@ -280,14 +302,51 @@ def _table(headers, rows):
     return f"<table style='border-collapse:collapse;font-family:monospace;font-size:13px'><tr>{th}</tr>{body_html}</table>"
 
 
-def build_email_body(buys, sells, today_str, new_unknowns=None):
+def build_email_body(buys, sells, today_str, new_unknowns=None, holdings=None):
     total_pnl = total_pnl_since_inception()
     color = "green" if total_pnl >= 0 else "red"
+
+    unrealized = sum(h.get("unrealized_pnl") or 0 for h in (holdings or []))
+    unrealized_color = "green" if unrealized >= 0 else "red"
+    total_value = total_pnl + unrealized
+    total_color = "green" if total_value >= 0 else "red"
+
     sections = [
         f"<h2>Contract Signal Report — {today_str}</h2>",
-        f"<p><strong>Cumulative P&amp;L since inception:</strong> "
-        f"<span style='color:{color};font-size:16px'>${total_pnl:+,.2f}</span></p>",
+        f"<p><strong>Realized P&amp;L since inception:</strong> "
+        f"<span style='color:{color};font-size:16px'>${total_pnl:+,.2f}</span><br>"
+        f"<strong>Unrealized P&amp;L (open positions):</strong> "
+        f"<span style='color:{unrealized_color};font-size:16px'>${unrealized:+,.2f}</span><br>"
+        f"<strong>Total (realized + unrealized):</strong> "
+        f"<span style='color:{total_color};font-size:16px'>${total_value:+,.2f}</span></p>",
     ]
+
+    if holdings:
+        sections.append(f"<h3>Open Positions ({len(holdings)})</h3>")
+        rows = []
+        for h in holdings:
+            cur = h.get("current_price")
+            upnl = h.get("unrealized_pnl")
+            cur_str = f"${cur:.2f}" if cur is not None else "—"
+            if upnl is None:
+                upnl_str = "—"
+            else:
+                upnl_str = f"<span style='color:{'green' if upnl >= 0 else 'red'}'>${upnl:+,.2f}</span>"
+            rows.append((
+                h["ticker"],
+                h["recipient"][:40],
+                f"${h['strike']:.2f}",
+                h["expiry"],
+                f"${h['entry_price']:.2f}",
+                cur_str,
+                h["quantity"],
+                upnl_str,
+                h["exit_date"],
+            ))
+        sections.append(_table(
+            ["Ticker", "Recipient", "Strike", "Expiry", "Entry", "Current", "Contracts", "Unrealized P&L", "Target Exit"],
+            rows,
+        ))
 
     sections.append(f"<h3>Positions Opened ({len(buys)})</h3>")
     if buys:
@@ -360,7 +419,7 @@ def build_email_body(buys, sells, today_str, new_unknowns=None):
     return "\n".join(sections)
 
 
-def send_daily_report(buys, sells, today_str, new_unknowns=None):
+def send_daily_report(buys, sells, today_str, new_unknowns=None, holdings=None):
     email_user = os.getenv("EMAIL_USER")
     email_pass = os.getenv("EMAIL_PASS")
     to_email = os.getenv("TO_EMAIL")
@@ -369,7 +428,7 @@ def send_daily_report(buys, sells, today_str, new_unknowns=None):
         return
 
     subject = f"Contract Signal — {today_str}: {len(buys)} bought, {len(sells)} sold"
-    body = build_email_body(buys, sells, today_str, new_unknowns=new_unknowns)
+    body = build_email_body(buys, sells, today_str, new_unknowns=new_unknowns, holdings=holdings)
 
     msg = MIMEMultipart("alternative")
     msg["From"] = email_user
@@ -579,7 +638,9 @@ def run_contract_live(ib, config, dry_run=False):
     if not dry_run:
         save_option_positions(remaining)
         save_processed_ids(processed_ids)
-    send_daily_report(buys, sells, today_str, new_unknowns=new_unknowns)
+
+    holdings = snapshot_open_positions(ib, remaining)
+    send_daily_report(buys, sells, today_str, new_unknowns=new_unknowns, holdings=holdings)
 
     logging.info(f"Contract live run complete: {len(buys)} bought, {len(sells)} sold.")
     return buys, sells
