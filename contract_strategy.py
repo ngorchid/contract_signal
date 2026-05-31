@@ -219,6 +219,8 @@ CONTRACTOR_TICKER_MAP = {
     "CORECIVIC": "CXW",
     "AMERESCO": "AMRC",
     "GLOBALFOUNDRIES": "GFS",
+    "EQUIFAX": "EFX",
+    "EQUIFAX WORKFORCE SOLUTIONS": "EFX",
     # ── Private (explicitly excluded) ─────────────────────────────────────────
     "PERATON": None,
     "AMENTUM": None,
