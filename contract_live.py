@@ -323,17 +323,37 @@ def build_email_body(buys, sells, today_str, new_unknowns=None, holdings=None):
     total_pnl = total_pnl_since_inception()
     color = "green" if total_pnl >= 0 else "red"
 
+    # Portfolio metrics from currently open positions
+    portfolio_value = 0.0
+    cost_basis = 0.0
+    for h in (holdings or []):
+        cur = h.get("current_price")
+        entry = h.get("entry_price")
+        qty = h.get("quantity", 0)
+        if _valid_price(cur):
+            portfolio_value += cur * qty * 100
+        if _valid_price(entry):
+            cost_basis += entry * qty * 100
+
     unrealized = sum(h.get("unrealized_pnl") or 0 for h in (holdings or []))
     unrealized_color = "green" if unrealized >= 0 else "red"
+    unrealized_pct = (unrealized / cost_basis * 100) if cost_basis > 0 else None
+
     total_value = total_pnl + unrealized
     total_color = "green" if total_value >= 0 else "red"
 
+    upnl_pct_str = f" ({unrealized_pct:+.2f}%)" if unrealized_pct is not None else ""
+
     sections = [
         f"<h2>Contract Signal Report — {today_str}</h2>",
-        f"<p><strong>Realized P&amp;L since inception:</strong> "
+        f"<p><strong>Portfolio value (open positions):</strong> "
+        f"<span style='font-size:16px'>${portfolio_value:,.2f}</span><br>"
+        f"<strong>Cost basis (open positions):</strong> "
+        f"<span style='font-size:16px'>${cost_basis:,.2f}</span><br>"
+        f"<strong>Unrealized P&amp;L:</strong> "
+        f"<span style='color:{unrealized_color};font-size:16px'>${unrealized:+,.2f}{upnl_pct_str}</span><br>"
+        f"<strong>Realized P&amp;L since inception:</strong> "
         f"<span style='color:{color};font-size:16px'>${total_pnl:+,.2f}</span><br>"
-        f"<strong>Unrealized P&amp;L (open positions):</strong> "
-        f"<span style='color:{unrealized_color};font-size:16px'>${unrealized:+,.2f}</span><br>"
         f"<strong>Total (realized + unrealized):</strong> "
         f"<span style='color:{total_color};font-size:16px'>${total_value:+,.2f}</span></p>",
     ]
