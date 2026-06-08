@@ -502,7 +502,7 @@ def run_contract_live(ib, config, dry_run=False):
     lookback_days        = cfg.get("8k_lookback_days", 28)
     max_market_cap       = cfg.get("max_market_cap")
     call_otm_pct         = cfg.get("call_otm_pct", 0.30)
-    contracts_per_signal = cfg.get("contracts_per_signal", 1)
+    per_trade_budget     = cfg.get("per_trade_budget", 790)
     min_materiality      = cfg.get("min_materiality_live")
     reporting_lookback   = cfg.get("reporting_lookback_days", 3)
     max_reporting_lag    = cfg.get("max_reporting_lag_days", 5)
@@ -637,6 +637,19 @@ def run_contract_live(ib, config, dry_run=False):
                             logging.warning(f"[{ticker}] No valid option price — skipping.")
                             continue
 
+                        # Equal-dollar sizing: buy ~per_trade_budget worth of contracts.
+                        # Skip names whose single-contract premium exceeds the budget — these are
+                        # the expensive (high-IV) options that dilute per-dollar edge and can't be
+                        # sized down to the target. (See equal-dollar sizing study.)
+                        premium_per_contract = entry_price * 100.0
+                        if premium_per_contract > per_trade_budget:
+                            logging.info(
+                                f"[{ticker}] Premium ${premium_per_contract:,.0f}/contract exceeds "
+                                f"budget ${per_trade_budget:,.0f} — skipping (too expensive for equal-dollar)."
+                            )
+                            continue
+                        quantity = max(1, int(round(per_trade_budget / premium_per_contract)))
+
                         exit_date = pd.bdate_range(start=today, periods=hold_days + 1)[-1].date()
 
                         pos = {
@@ -644,7 +657,7 @@ def run_contract_live(ib, config, dry_run=False):
                             "recipient": ev["recipient"],
                             "strike": strike,
                             "expiry": expiry_str,
-                            "quantity": contracts_per_signal,
+                            "quantity": quantity,
                             "entry_price": entry_price,
                             "entry_date": today_str,
                             "exit_date": str(exit_date),
@@ -654,18 +667,19 @@ def run_contract_live(ib, config, dry_run=False):
                         award_id = ev.get("award_id", "")
                         if dry_run:
                             logging.info(
-                                f"[DRY RUN] Would buy {contracts_per_signal}x {ticker} call "
+                                f"[DRY RUN] Would buy {quantity}x {ticker} call "
                                 f"K={strike} exp={expiry_str} @ {entry_price:.2f}  "
-                                f"(exit target: {exit_date})"
+                                f"(~${quantity * premium_per_contract:,.0f}, exit target: {exit_date})"
                             )
                         else:
-                            order = MarketOrder("BUY", contracts_per_signal)
+                            order = MarketOrder("BUY", quantity)
                             ib.placeOrder(opt_contract, order)
                             ib.sleep(2)
                             remaining.append(pos)
                             logging.info(
-                                f"[{ticker}] Bought {contracts_per_signal}x call "
-                                f"K={strike} exp={expiry_str} @ {entry_price:.2f}"
+                                f"[{ticker}] Bought {quantity}x call "
+                                f"K={strike} exp={expiry_str} @ {entry_price:.2f}  "
+                                f"(~${quantity * premium_per_contract:,.0f})"
                             )
                         # Mark as processed regardless of dry_run so we don't re-evaluate tomorrow
                         if award_id:

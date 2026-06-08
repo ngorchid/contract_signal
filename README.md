@@ -10,7 +10,7 @@ When the US government awards a large contract to a public company, the award is
 - **Material** for smaller companies where the award is large relative to market cap
 - **Verifiable** against SEC 8-K filings to filter out pre-announced deals
 
-The strategy buys a 30% out-of-the-money call option with ~1 year to expiry on the day the contract appears, holds for 60 trading days, then exits.
+The strategy buys a 30% out-of-the-money call option with ~1 year to expiry on the day the contract appears, holds for 60 trading days, then exits. Positions are **equal-dollar sized** to a fixed budget per trade, skipping options whose per-contract premium exceeds that budget.
 
 ---
 
@@ -36,7 +36,7 @@ USASpending.gov API
         │
         ▼
   Buy 30% OTM call option, ~1 year expiry
-        │
+        │  (equal-dollar sized; skip if premium > per-trade budget)
         ▼
   Hold 60 trading days, then sell
 ```
@@ -51,17 +51,36 @@ USASpending.gov API
 | 8-K filter | Removes contracts already disclosed to market via SEC filing |
 | Market cap ≤ $100B | Large caps (e.g. Microsoft) are unaffected by individual contract awards |
 | Tranche-based portfolio | 1/60 of capital enters daily, creating a rolling diversified book |
+| Equal-dollar sizing | Fixed $ budget per trade — buy `round(budget / premium)` contracts, skip options pricier than the budget. Prevents a few expensive high-IV names from dominating dollar P&L |
 
 ---
 
 ## Backtest Results
 
-| Period | Ann. Return | Sharpe | Max Drawdown |
-|---|---|---|---|
-| Dev (2015–2021) | 39.4% | 2.39 | -30.9% |
-| Test (2022–2025) | 54.6% | 4.00 | -16.9% |
+Out-of-sample (2022–2025), under the equal-dollar sizing, measured with a **daily
+mark-to-market equity curve** — every open option is re-priced each day off the
+underlying's actual path (Black-Scholes, entry implied vol held fixed), with a 3%
+per-leg spread crossed on entry and exit:
 
-*Options returns modelled using Black-Scholes with 60-day historical volatility. Time decay accounted for at exit. Transaction costs of 3% per leg (entry + exit) applied to model bid-ask spread.*
+| Metric | Test (2022–2025, out-of-sample) |
+|---|---|
+| Annualized return | ~32% |
+| Sharpe | ~0.76 |
+| Sortino | ~1.2 |
+| Max drawdown | ~−45% |
+| Win rate (per trade) | ~45% |
+| Annualized volatility | ~50% |
+
+This is a **high-variance, positive-skew** profile: most individual trades lose, and
+a minority of large winners carry the return — so volatility and drawdowns are
+substantial, and the strategy is tail-dependent (removing the ~10 best trades
+roughly halves the edge).
+
+> **Note on methodology.** Earlier versions of this README quoted much higher Sharpe
+> figures (~4) and a shallow drawdown (~−17%). Those came from a linear P&L-accrual
+> backtest that smeared each trade's profit evenly across its holding days, which
+> artificially smoothed the daily return series and understated both volatility and
+> drawdown. The mark-to-market figures above are the realistic ones.
 
 ---
 
@@ -102,6 +121,7 @@ cp .env.example .env
 
 Edit `config.yaml`. Key fields:
 - `min_materiality_live` — absolute materiality threshold for live trading (resolve once by running the backtest and reading the logged value)
+- `per_trade_budget` — dollar budget per position (equal-dollar sizing); also the skip threshold for options whose per-contract premium exceeds it
 - `ib_gateway_bat_win` / `ib_gateway_bat_mac` — path to your IB Gateway startup script
 
 **4. IB Gateway**

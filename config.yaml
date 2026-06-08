@@ -19,7 +19,10 @@ contract_strategy:
 
   # Live trading
   min_materiality_live: 0.0008        # Absolute threshold (resolved from backtest)
-  contracts_per_signal: 1             # Option contracts per signal (100 shares each)
+  per_trade_budget: 790               # Equal-dollar sizing: target $ per position. Buy
+                                      # round(budget / premium_per_contract) contracts (min 1);
+                                      # skip signals whose per-contract premium exceeds this
+                                      # (the expensive high-IV tail that dilutes per-dollar edge)
   reporting_lookback_days: 3          # Days back to search USASpending (reporting lag)
   max_reporting_lag_days:  5          # Discard contracts older than this
 
