@@ -503,6 +503,8 @@ def run_contract_live(ib, config, dry_run=False):
     max_market_cap       = cfg.get("max_market_cap")
     call_otm_pct         = cfg.get("call_otm_pct", 0.30)
     per_trade_budget     = cfg.get("per_trade_budget", 790)
+    take_profit_arm      = cfg.get("take_profit_arm", 1.0)    # arm trail once up >= this (None disables)
+    take_profit_trail    = cfg.get("take_profit_trail", 0.25)  # exit if mark falls >= this off peak
     min_materiality      = cfg.get("min_materiality_live")
     reporting_lookback   = cfg.get("reporting_lookback_days", 3)
     max_reporting_lag    = cfg.get("max_reporting_lag_days", 5)
@@ -515,10 +517,15 @@ def run_contract_live(ib, config, dry_run=False):
     positions = load_option_positions()
     remaining = []
 
-    # ── Sell positions past hold period ──────────────────────────────────────
+    # ── Sell positions: hold-period exit OR trailing take-profit ─────────────
+    # Take-profit: once a position is up >= take_profit_arm (vs entry), trail its
+    # peak option mark and exit if it retraces >= take_profit_trail. Losers never
+    # arm, so they ride to the hold date. (See take-profit backtest.)
+    take_profit_on = take_profit_arm is not None and take_profit_trail
     for pos in positions:
-        exit_date = pd.to_datetime(pos["exit_date"]).date()
-        if today < exit_date:
+        hold_reached = today >= pd.to_datetime(pos["exit_date"]).date()
+        # When take-profit is off, only inspect positions at their hold date (saves IB calls).
+        if not hold_reached and not take_profit_on:
             remaining.append(pos)
             continue
 
@@ -536,16 +543,32 @@ def run_contract_live(ib, config, dry_run=False):
                 remaining.append(pos)
                 continue
 
+            # Update the trailing-stop peak and test the trigger.
+            trail_triggered = False
+            if take_profit_on:
+                peak_price = max(pos.get("peak_price", pos["entry_price"]), exit_price)
+                pos["peak_price"] = peak_price
+                armed = peak_price >= pos["entry_price"] * (1 + take_profit_arm)
+                trail_triggered = armed and exit_price <= peak_price * (1 - take_profit_trail)
+
+            if not hold_reached and not trail_triggered:
+                remaining.append(pos)   # keep holding (peak update persists)
+                continue
+
+            reason = "hold period" if hold_reached else \
+                f"trailing stop ({int(take_profit_trail*100)}% off peak ${pos.get('peak_price', exit_price):.2f})"
             pnl = (exit_price - pos["entry_price"]) * pos["quantity"] * 100
-            sell_record = {**pos, "exit_price": exit_price, "pnl": pnl, "exit_date_actual": today_str}
+            sell_record = {**pos, "exit_price": exit_price, "pnl": pnl,
+                           "exit_date_actual": today_str,
+                           "exit_reason": "hold" if hold_reached else "trail"}
             if dry_run:
-                logging.info(f"[DRY RUN] Would sell {ticker} call K={pos['strike']} exp={pos['expiry']} @ {exit_price:.2f}  PnL=${pnl:+.2f}")
+                logging.info(f"[DRY RUN] Would sell {ticker} call K={pos['strike']} exp={pos['expiry']} @ {exit_price:.2f}  PnL=${pnl:+.2f}  ({reason})")
             else:
                 order = MarketOrder("SELL", pos["quantity"])
                 ib.placeOrder(opt_contract, order)
                 ib.sleep(2)
                 append_trade_log(sell_record)
-                logging.info(f"[{ticker}] Sold call K={pos['strike']} exp={pos['expiry']} @ {exit_price:.2f}  PnL=${pnl:+.2f}")
+                logging.info(f"[{ticker}] Sold call K={pos['strike']} exp={pos['expiry']} @ {exit_price:.2f}  PnL=${pnl:+.2f}  ({reason})")
             sells.append(sell_record)
 
         except Exception as e:
@@ -659,6 +682,7 @@ def run_contract_live(ib, config, dry_run=False):
                             "expiry": expiry_str,
                             "quantity": quantity,
                             "entry_price": entry_price,
+                            "peak_price": entry_price,
                             "entry_date": today_str,
                             "exit_date": str(exit_date),
                             "amount": float(ev["amount"]),

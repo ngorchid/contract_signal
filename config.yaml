@@ -23,6 +23,9 @@ contract_strategy:
                                       # round(budget / premium_per_contract) contracts (min 1);
                                       # skip signals whose per-contract premium exceeds this
                                       # (the expensive high-IV tail that dilutes per-dollar edge)
+  take_profit_arm:  1.00              # Trailing take-profit: arm once a position's mark is up
+  take_profit_trail: 0.25             # >= arm vs entry, then exit if it retraces >= trail off
+                                      # its peak. Losers never arm. Set take_profit_arm null to disable.
   reporting_lookback_days: 3          # Days back to search USASpending (reporting lag)
   max_reporting_lag_days:  5          # Discard contracts older than this
 

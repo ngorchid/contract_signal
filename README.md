@@ -10,7 +10,7 @@ When the US government awards a large contract to a public company, the award is
 - **Material** for smaller companies where the award is large relative to market cap
 - **Verifiable** against SEC 8-K filings to filter out pre-announced deals
 
-The strategy buys a 30% out-of-the-money call option with ~1 year to expiry on the day the contract appears, holds for 60 trading days, then exits. Positions are **equal-dollar sized** to a fixed budget per trade, skipping options whose per-contract premium exceeds that budget.
+The strategy buys a 30% out-of-the-money call option with ~1 year to expiry on the day the contract appears, holds for up to 60 trading days, then exits. Positions are **equal-dollar sized** to a fixed budget per trade, skipping options whose per-contract premium exceeds that budget. A **trailing take-profit** exits winners early: once a position doubles, it sells if the option mark retraces 25% from its peak.
 
 ---
 
@@ -38,7 +38,7 @@ USASpending.gov API
   Buy 30% OTM call option, ~1 year expiry
         │  (equal-dollar sized; skip if premium > per-trade budget)
         ▼
-  Hold 60 trading days, then sell
+  Hold ≤60 trading days — exit at 60d or on trailing take-profit, then sell
 ```
 
 ### Key design choices
@@ -52,6 +52,7 @@ USASpending.gov API
 | Market cap ≤ $100B | Large caps (e.g. Microsoft) are unaffected by individual contract awards |
 | Tranche-based portfolio | 1/60 of capital enters daily, creating a rolling diversified book |
 | Equal-dollar sizing | Fixed $ budget per trade — buy `round(budget / premium)` contracts, skip options pricier than the budget. Prevents a few expensive high-IV names from dominating dollar P&L |
+| Trailing take-profit | Once a position is up +100%, exit if its option mark retraces 25% from the peak — banks the give-back on names that spike. Losers never arm, so they ride to the 60-day exit (a stop active from entry would clip the convex winners and hurt the edge) |
 
 ---
 
@@ -74,7 +75,8 @@ per-leg spread crossed on entry and exit:
 This is a **high-variance, positive-skew** profile: most individual trades lose, and
 a minority of large winners carry the return — so volatility and drawdowns are
 substantial, and the strategy is tail-dependent (removing the ~10 best trades
-roughly halves the edge).
+roughly halves the edge). The trailing take-profit modestly improves risk-adjusted
+return and frees capital earlier without materially changing this profile.
 
 > **Note on methodology.** Earlier versions of this README quoted much higher Sharpe
 > figures (~4) and a shallow drawdown (~−17%). Those came from a linear P&L-accrual
